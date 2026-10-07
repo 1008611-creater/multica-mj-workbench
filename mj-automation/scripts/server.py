@@ -88,7 +88,7 @@ MAX_N = int(os.environ.get("MJ_BRIDGE_MAX_N", "15"))
 # 【2026-09-12】构建标记。用途：外部只能通过 /health 判断"跑的是不是改过之后的代码"。
 # 上一版的 /health 新旧完全一致，导致无法确认重启是否成功（只能靠猜）。
 # 每次改完 server.py 都把这个号 +1，重启后 /health 的 bridge 字段会跟着变。
-BRIDGE_BUILD = "2026.10.08.1"
+BRIDGE_BUILD = "2026.10.08.2"
 BRIDGE_ID = "multica-local-draw-bridge"
 INSTALL_ROOT = Path(os.environ.get("MULTICA_INSTALL_ROOT", str(HERE.parents[1]))).resolve()
 BUNDLED_NODE = INSTALL_ROOT / "runtime" / "node" / "node.exe"

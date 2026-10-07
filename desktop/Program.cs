@@ -1,7 +1,6 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Drawing.Drawing2D;
 using Microsoft.Web.WebView2.WinForms;
 
 namespace Multica.Desktop;
@@ -20,48 +19,44 @@ internal sealed class MainForm : Form
 {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(4) };
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 3000 };
-    private readonly Label _serviceValue = new();
-    private readonly Label _browserValue = new();
-    private readonly Label _queueValue = new();
-    private readonly Label _detailValue = new();
+    private readonly WebView2 _workbenchView = new() { Dock = DockStyle.Fill, Visible = false };
+    private readonly TableLayoutPanel _startupPanel = new();
+    private readonly Label _startupMessage = new();
+    private readonly Button _startupRetry = new();
     private readonly Label _lastAction = new();
-    private readonly Panel _serviceDot = new();
-    private readonly Panel _browserDot = new();
-    private readonly Panel _queueDot = new();
-    private readonly Button _openWorkbench = new();
-    private readonly Button _continueBatch = new();
-    private readonly Button _browserButton = new();
-    private readonly Button _stopButton = new();
-    private Form? _workbenchWindow;
+    private readonly Panel _noticePanel = new();
+    private readonly ToolStripStatusLabel _serviceStatus = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+    private readonly ToolStripMenuItem _stopMenu = new("停止本机服务");
+    private bool _workbenchInitializing;
+    private bool _workbenchNavigationPending;
+    private bool _connectionProblemShown;
+    private bool _workbenchReady;
+    private bool _workbenchLoadFailed;
+    private bool _refreshing;
+    private bool _retrying;
     private Process? _serverProcess;
     private bool _closing;
     private bool _userRequestedStop;
     private bool _recoveringService;
     private int _recoveryAttempts;
-    private bool? _lastLoggedIn;
     private string? _healthProblem;
     private readonly string _root;
     private readonly string _baseUrl;
 
     private static readonly Color Bg = Color.FromArgb(245, 245, 242);
-    private static readonly Color Panel = Color.White;
-    private static readonly Color Panel2 = Color.FromArgb(238, 239, 234);
-    private static readonly Color Line = Color.FromArgb(226, 230, 225);
     private static readonly Color TextColor = Color.FromArgb(33, 42, 41);
     private static readonly Color Muted = Color.FromArgb(116, 125, 120);
     private static readonly Color Accent = Color.FromArgb(35, 102, 91);
-    private static readonly Color Good = Color.FromArgb(39, 143, 103);
-    private static readonly Color Warn = Color.FromArgb(190, 129, 37);
     private static readonly Color Bad = Color.FromArgb(191, 73, 73);
     public MainForm()
     {
         _root = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
         var port = Environment.GetEnvironmentVariable("MULTICA_PORT") ?? "8765";
         _baseUrl = $"http://127.0.0.1:{port}";
-        this.Text = "Multica 本地抽卡工作台";
+        this.Text = "Multica 创作工作台 · 2026.10.08.2";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(980, 660);
-        ClientSize = new Size(1120, 720);
+        MinimumSize = new Size(960, 640);
+        ClientSize = new Size(1380, 880);
         BackColor = Bg;
         ForeColor = TextColor;
         Font = new Font("Microsoft YaHei UI", 10F);
@@ -70,15 +65,16 @@ internal sealed class MainForm : Form
         BuildUi();
         _timer.Tick += async (_, _) =>
         {
-            if (!await IsHealthyAsync()) await RecoverExitedServiceAsync();
-            await RefreshStatusAsync();
+            if (_refreshing || _closing || _retrying) return;
+            _refreshing = true;
+            try
+            {
+                if (!await IsHealthyAsync()) await RecoverExitedServiceAsync();
+                await RefreshStatusAsync();
+            }
+            finally { _refreshing = false; }
         };
-        Shown += async (_, _) =>
-        {
-            SetAction("正在启动本地工作台…");
-            await StartServiceAsync();
-            await RefreshStatusAsync();
-        };
+        Shown += async (_, _) => await RetryWorkbenchAsync();
         FormClosing += async (_, e) =>
         {
             if (_closing) return;
@@ -111,103 +107,102 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        SuspendLayout();
-        var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Bg };
-        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 248));
-        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        Controls.Add(shell);
+        // The creative workbench is the main window, not a second window behind a legacy dashboard.
+        _workbenchView.CreationProperties = new CoreWebView2CreationProperties
+        {
+            UserDataFolder = Path.Combine(_root, "runtime", "webview-profile")
+        };
+        _workbenchView.NavigationCompleted += (_, e) =>
+        {
+            if (_closing || (!_workbenchNavigationPending && !_workbenchReady)) return;
+            _workbenchNavigationPending = false;
+            if (!e.IsSuccess || e.HttpStatusCode >= 400)
+            {
+                _workbenchLoadFailed = true;
+                _workbenchReady = false;
+                _workbenchView.Visible = false;
+                _startupPanel.Visible = true;
+                _startupPanel.BringToFront();
+                SetAction($"工作区加载失败（{e.WebErrorStatus}，HTTP {e.HttpStatusCode}）。请重试连接。", true);
+                _startupRetry.Enabled = true;
+                return;
+            }
+            _workbenchReady = true;
+            _workbenchLoadFailed = false;
+            _startupPanel.Visible = false;
+            _workbenchView.Visible = true;
+            _workbenchView.Focus();
+            SetAction("创作工作台已就绪。");
+        };
+        Controls.Add(_workbenchView);
 
-        var side = new Panel { Dock = DockStyle.Fill, Padding = new Padding(22, 26, 18, 20), BackColor = Color.White };
-        side.Paint += (_, e) => { using var pen = new Pen(Line); e.Graphics.DrawLine(pen, side.Width - 1, 0, side.Width - 1, side.Height); };
-        shell.Controls.Add(side, 0, 0);
-        var brand = new Label { Text = "M", AutoSize = false, Size = new Size(42, 42), Location = new Point(22, 24), BackColor = Accent, ForeColor = Color.White, Font = new Font("Segoe UI", 21, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter };
-        side.Controls.Add(brand);
-        var title = NewLabel("Multica", 20, FontStyle.Bold, TextColor); title.Location = new Point(76, 24); title.AutoSize = true; side.Controls.Add(title);
-        var subtitle = NewLabel("本地抽卡工作台", 9.5F, FontStyle.Regular, Muted); subtitle.Location = new Point(77, 55); subtitle.AutoSize = true; side.Controls.Add(subtitle);
-        var version = NewLabel("WINDOWS 桌面版  ·  1.0", 8.5F, FontStyle.Bold, Muted); version.Location = new Point(24, 91); version.AutoSize = true; side.Controls.Add(version);
+        _startupPanel.Dock = DockStyle.Fill;
+        _startupPanel.ColumnCount = 3;
+        _startupPanel.RowCount = 3;
+        _startupPanel.BackColor = Bg;
+        _startupPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        _startupPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 560));
+        _startupPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        _startupPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        _startupPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 230));
+        _startupPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        var loading = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(24) };
+        loading.Controls.Add(new Label { Text = "Multica 创作工作台", AutoSize = true, Font = new Font("Microsoft YaHei UI", 24, FontStyle.Bold), ForeColor = Accent, Margin = new Padding(0, 0, 0, 16) });
+        _startupMessage.Text = "正在连接本机服务，准备你的创作空间…";
+        _startupMessage.AutoSize = false;
+        _startupMessage.Size = new Size(510, 70);
+        loading.Controls.Add(_startupMessage);
+        _startupRetry.Text = "重试连接";
+        _startupRetry.Size = new Size(140, 40);
+        _startupRetry.Enabled = false;
+        _startupRetry.Click += async (_, _) => await RetryWorkbenchAsync();
+        loading.Controls.Add(_startupRetry);
+        _startupPanel.Controls.Add(loading, 1, 1);
+        Controls.Add(_startupPanel);
+        _startupPanel.BringToFront();
 
-        var navCaption = NewLabel("工作空间", 9, FontStyle.Bold, Muted); navCaption.Location = new Point(24, 139); navCaption.AutoSize = true; side.Controls.Add(navCaption);
-        var nav = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, Location = new Point(15, 163), Size = new Size(214, 252), BackColor = Color.Transparent, Margin = Padding.Empty };
-        side.Controls.Add(nav);
-        nav.Controls.Add(MakeNavButton("▦   工作台总览", OpenWorkbench, true));
-        nav.Controls.Add(MakeNavButton("◉   登录浏览器", () => _ = StartBrowser()));
-        nav.Controls.Add(MakeNavButton("▣   打开成品目录", OpenOutput));
-        nav.Controls.Add(MakeNavButton("⌂   打开安装目录", OpenRoot));
-        nav.Controls.Add(MakeNavButton("Ⅱ   停止本地服务", () => _ = StopServiceAsync()));
+        _noticePanel.Dock = DockStyle.Bottom;
+        _noticePanel.Height = 54;
+        _noticePanel.BackColor = Color.FromArgb(255, 243, 236);
+        _noticePanel.Padding = new Padding(16, 8, 16, 8);
+        _noticePanel.Visible = false;
+        _lastAction.Dock = DockStyle.Fill;
+        _lastAction.TextAlign = ContentAlignment.MiddleLeft;
+        _noticePanel.Controls.Add(_lastAction);
+        Controls.Add(_noticePanel);
 
-        var safety = new Panel { Location = new Point(20, 445), Size = new Size(196, 110), BackColor = Color.FromArgb(245, 245, 242), Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom };
-        var safetyTitle = NewLabel("操作始终由你掌控", 9.5F, FontStyle.Bold, TextColor); safetyTitle.Location = new Point(12, 12); safetyTitle.AutoSize = true; safety.Controls.Add(safetyTitle);
-        var safetyText = NewLabel("登录与付费提交需要你在工作台内明确确认。\n本程序不会读取或显示账户凭据。", 8.5F, FontStyle.Regular, Muted); safetyText.Location = new Point(12, 36); safetyText.Size = new Size(170, 54); safetyText.AutoSize = false; safety.Controls.Add(safetyText);
-        side.Controls.Add(safety);
-        var copyright = NewLabel("MULTICA  LOCAL STUDIO", 8, FontStyle.Bold, Muted); copyright.AutoSize = true; copyright.Location = new Point(23, 625); copyright.Anchor = AnchorStyles.Left | AnchorStyles.Bottom; side.Controls.Add(copyright);
-
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, BackColor = Bg, Padding = new Padding(34, 27, 34, 26) };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 93));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 142));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 214));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 164));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        shell.Controls.Add(body, 1, 0);
-
-        var header = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
-        var eyebrow = NewLabel("LOCAL CONTROL CENTER", 8.5F, FontStyle.Bold, Accent); eyebrow.Location = new Point(0, 0); eyebrow.AutoSize = true; header.Controls.Add(eyebrow);
-        var heading = NewLabel("工作台总览", 25, FontStyle.Bold, TextColor); heading.Location = new Point(0, 22); heading.AutoSize = true; header.Controls.Add(heading);
-        var description = NewLabel("查看本机服务、浏览器与近期作业状态。", 10, FontStyle.Regular, Muted); description.Location = new Point(2, 59); description.AutoSize = true; header.Controls.Add(description);
-        _detailValue.Text = "正在检查本机状态…"; _detailValue.ForeColor = Muted; _detailValue.AutoSize = false; _detailValue.TextAlign = ContentAlignment.MiddleRight; _detailValue.Dock = DockStyle.Right; _detailValue.Width = 360; header.Controls.Add(_detailValue);
-        body.Controls.Add(header, 0, 0);
-
-        var statusGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = Color.Transparent, Padding = new Padding(0, 2, 0, 12) };
-        for (var i = 0; i < 3; i++) statusGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
-        statusGrid.Controls.Add(MakeStatusCard("本地服务", "正在检查", "桥接服务运行状态", _serviceValue, _serviceDot), 0, 0);
-        statusGrid.Controls.Add(MakeStatusCard("可见浏览器", "未启动", "登录由你本人完成", _browserValue, _browserDot), 1, 0);
-        statusGrid.Controls.Add(MakeStatusCard("任务队列", "等待读取", "本机已记录作业", _queueValue, _queueDot), 2, 0);
-        body.Controls.Add(statusGrid, 0, 1);
-
-        var actionCard = MakeCard(); actionCard.Dock = DockStyle.Fill; actionCard.Padding = new Padding(24, 19, 24, 18);
-        var actionEyebrow = NewLabel("QUICK ACCESS", 8.5F, FontStyle.Bold, Accent); actionEyebrow.Location = new Point(24, 18); actionEyebrow.AutoSize = true; actionCard.Controls.Add(actionEyebrow);
-        var actionTitle = NewLabel("继续你的创作", 17, FontStyle.Bold, TextColor); actionTitle.Location = new Point(24, 41); actionTitle.AutoSize = true; actionCard.Controls.Add(actionTitle);
-        var actionSub = NewLabel("打开工作台管理批次与回执；需要登录时，再启动可见浏览器。", 9.5F, FontStyle.Regular, Muted); actionSub.Location = new Point(26, 72); actionSub.AutoSize = true; actionCard.Controls.Add(actionSub);
-        _openWorkbench.Text = "打开任务队列   ›"; StyleButton(_openWorkbench, true); _openWorkbench.Location = new Point(24, 111); _openWorkbench.Size = new Size(184, 42); _openWorkbench.Click += (_, _) => OpenWorkbench(); actionCard.Controls.Add(_openWorkbench);
-        _continueBatch.Text = "继续最近批次"; StyleButton(_continueBatch, false); _continueBatch.Location = new Point(218, 111); _continueBatch.Size = new Size(170, 42); _continueBatch.Click += (_, _) => OpenLatestBatch(); actionCard.Controls.Add(_continueBatch);
-        _browserButton.Text = "打开登录浏览器"; StyleButton(_browserButton, false); _browserButton.Location = new Point(398, 111); _browserButton.Size = new Size(160, 42); _browserButton.Click += async (_, _) => await StartBrowser(); actionCard.Controls.Add(_browserButton);
-        _stopButton.Text = "停止服务"; StyleButton(_stopButton, false); _stopButton.Location = new Point(568, 111); _stopButton.Size = new Size(120, 42); _stopButton.Click += StopButtonClick; actionCard.Controls.Add(_stopButton);
-        var note = NewLabel("继续批次会先打开最近记录；真正提交仍需你勾选费用确认。", 8.5F, FontStyle.Regular, Muted); note.Location = new Point(25, 166); note.AutoSize = true; actionCard.Controls.Add(note);
-        body.Controls.Add(actionCard, 0, 2);
-
-        var logCard = MakeCard(); logCard.Dock = DockStyle.Fill; logCard.Padding = new Padding(22, 18, 22, 16);
-        var logTitle = NewLabel("最近活动", 13, FontStyle.Bold, TextColor); logTitle.Location = new Point(22, 17); logTitle.AutoSize = true; logCard.Controls.Add(logTitle);
-        var logHint = NewLabel("本程序的最近一次本地操作", 8.5F, FontStyle.Regular, Muted); logHint.Location = new Point(23, 43); logHint.AutoSize = true; logCard.Controls.Add(logHint);
-        var separator = new Panel { BackColor = Line, Location = new Point(22, 68), Height = 1, Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right }; separator.Width = 750; logCard.Controls.Add(separator);
-        _lastAction.Text = "等待操作"; _lastAction.ForeColor = Muted; _lastAction.AutoSize = false; _lastAction.Location = new Point(23, 82); _lastAction.Size = new Size(750, 32); _lastAction.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right; logCard.Controls.Add(_lastAction);
-        var path = NewLabel("任务、回执和成品保存在本机；关闭窗口不会自动清理。", 8.5F, FontStyle.Regular, Muted); path.Location = new Point(23, 122); path.AutoSize = true; logCard.Controls.Add(path);
-        body.Controls.Add(logCard, 0, 3);
-        ResumeLayout(true);
+        var status = new StatusStrip { BackColor = Bg, SizingGrip = true };
+        _serviceStatus.Text = "正在连接本机服务…";
+        status.Items.Add(_serviceStatus);
+        var diagnostics = new ToolStripDropDownButton("本机诊断");
+        diagnostics.DropDownItems.Add("重试连接", null, async (_, _) => await RetryWorkbenchAsync());
+        diagnostics.DropDownItems.Add("打开安装目录", null, (_, _) => OpenRoot());
+        _stopMenu.Click += async (_, _) => await StopServiceAsync();
+        diagnostics.DropDownItems.Add(_stopMenu);
+        status.Items.Add(diagnostics);
+        Controls.Add(status);
     }
 
-    private static Label NewLabel(string text, float size, FontStyle style, Color color) => new() { Text = text, Font = new Font("Microsoft YaHei UI", size, style), ForeColor = color, BackColor = Color.Transparent };
-    private static Panel MakeCard() => new() { BackColor = Panel, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 0, 12, 0) };
-
-    private Panel MakeStatusCard(string title, string value, string caption, Label valueLabel, Panel dot)
+    private async Task RetryWorkbenchAsync()
     {
-        var card = MakeCard(); card.Dock = DockStyle.Fill; card.Margin = new Padding(0, 0, 12, 0); card.Padding = new Padding(18);
-        var label = NewLabel(title, 9, FontStyle.Bold, Muted); label.Location = new Point(18, 14); label.AutoSize = true; card.Controls.Add(label);
-        dot.Size = new Size(8, 8); dot.Location = new Point(19, 48); dot.BackColor = Warn; card.Controls.Add(dot);
-        valueLabel.Text = value; valueLabel.Font = new Font("Microsoft YaHei UI", 13, FontStyle.Bold); valueLabel.ForeColor = TextColor; valueLabel.AutoSize = false; valueLabel.Location = new Point(34, 39); valueLabel.Size = new Size(230, 27); card.Controls.Add(valueLabel);
-        var sub = NewLabel(caption, 8.5F, FontStyle.Regular, Muted); sub.Location = new Point(18, 76); sub.AutoSize = true; card.Controls.Add(sub);
-        return card;
+        if (_retrying || _closing) return;
+        _retrying = true;
+        _startupRetry.Enabled = false;
+        _workbenchLoadFailed = false;
+        _recoveryAttempts = 0;
+        try
+        {
+            SetAction("正在连接本机创作工作台…");
+            await StartServiceAsync();
+            await RefreshStatusAsync();
+        }
+        finally
+        {
+            _retrying = false;
+            if (!_workbenchReady) _startupRetry.Enabled = true;
+        }
     }
 
-    private Button MakeNavButton(string text, Action action, bool selected = false)
-    {
-        var b = new Button { Text = text, Width = 214, Height = 41, TextAlign = ContentAlignment.MiddleLeft, FlatStyle = FlatStyle.Flat, BackColor = selected ? Color.FromArgb(237, 243, 251) : Color.Transparent, ForeColor = selected ? Accent : TextColor, Font = new Font("Microsoft YaHei UI", 9.5F, selected ? FontStyle.Bold : FontStyle.Regular), Margin = new Padding(0, 3, 0, 3), Padding = new Padding(12, 0, 0, 0), Cursor = Cursors.Hand };
-        b.FlatAppearance.BorderSize = 0; b.FlatAppearance.MouseOverBackColor = Color.FromArgb(238, 239, 234); b.Click += (_, _) => action(); return b;
-    }
-
-    private static void StyleButton(Button button, bool primary)
-    {
-        button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderSize = primary ? 0 : 1; button.FlatAppearance.BorderColor = Line; button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(28, 65, 49) : Color.FromArgb(238, 239, 234); button.BackColor = primary ? Accent : Color.White; button.ForeColor = primary ? Color.White : TextColor; button.Font = new Font("Microsoft YaHei UI", 9, FontStyle.Bold); button.Cursor = Cursors.Hand;
-    }
     private async Task StartServiceAsync()
     {
         _userRequestedStop = false;
@@ -320,88 +315,64 @@ internal sealed class MainForm : Form
 
     private async Task RefreshStatusAsync()
     {
-        try
+        var health = await ReadBridgeHealthAsync();
+        if (_closing || IsDisposed) return;
+        _healthProblem = health.Problem;
+        _serviceStatus.Text = health.Compatible ? "本机服务已连接 · 2026.10.08.2" : "本机服务未连接";
+        _stopMenu.Enabled = health.Compatible && _serverProcess is { HasExited: false };
+        if (health.Compatible)
         {
-            var state = await _http.GetFromJsonAsync<JsonElement>(_baseUrl + "/control/state");
-            var bridgeHealth = await ReadBridgeHealthAsync();
-            _healthProblem = bridgeHealth.Problem;
-            var health = bridgeHealth.Compatible && state.TryGetProperty("health", out var h) && h.TryGetProperty("ok", out var ok) && ok.GetBoolean();
-            var browser = state.TryGetProperty("browser", out var br) && br.TryGetProperty("running", out var running) && running.GetBoolean();
-            var logged = br.ValueKind == JsonValueKind.Object && br.TryGetProperty("loggedIn", out var li) && li.GetBoolean();
-            var jobs = state.TryGetProperty("jobs", out var j) && j.TryGetProperty("items", out var items) ? items.GetArrayLength() : 0;
-            var receipts = state.TryGetProperty("receipts", out var r) && r.TryGetProperty("items", out var ri) ? ri.GetArrayLength() : 0;
-            SetStatus(_serviceValue, _serviceDot, health ? "已连接" : "不可用", health ? Good : Bad);
-            SetStatus(_browserValue, _browserDot, !browser ? "未启动" : logged ? "已登录" : "已启动，未登录", !browser ? Warn : logged ? Good : Warn);
-            SetStatus(_queueValue, _queueDot, jobs == 0 ? "暂无作业" : $"{jobs} 个作业", jobs == 0 ? Muted : Good);
-            _detailValue.Text = $"作业 {jobs} · 回执 {receipts} · 每 3 秒更新";
-            if (_lastLoggedIn is null || _lastLoggedIn.Value != logged)
+            if (_connectionProblemShown)
             {
-                SetAction(logged ? "已自动检测到共享浏览器已登录。" : browser ? "检测到浏览器尚未登录，请在可见窗口完成登录。" : "可见浏览器未启动。");
-                _lastLoggedIn = logged;
+                _connectionProblemShown = false;
+                SetAction("本机服务连接已恢复。");
             }
-            _openWorkbench.Enabled = health; _browserButton.Enabled = health;
-            var ownedProcessRunning = _serverProcess is { HasExited: false };
-            _stopButton.Enabled = health ? ownedProcessRunning : !_recoveringService;
-            _stopButton.Text = health ? (ownedProcessRunning ? "停止服务" : "服务由其他程序运行") : (_recoveringService ? "正在恢复…" : "启动服务");
+            // Periodic health checks must not reload the page or discard unsaved creative drafts.
+            if (!_workbenchReady && !_workbenchInitializing && !_workbenchNavigationPending && !_workbenchLoadFailed)
+                await InitializeWorkbenchAsync();
         }
-        catch { SetStatus(_serviceValue, _serviceDot, "不可用", Bad); _detailValue.Text = "无法读取本机状态"; _openWorkbench.Enabled = false; _browserButton.Enabled = false; }
+        else
+        {
+            _connectionProblemShown = true;
+            SetAction(health.Problem ?? "本机服务尚未连接。请重试连接或检查安装目录。", true);
+        }
     }
 
-    private static void SetStatus(Label value, Panel dot, string text, Color color) { value.Text = text; value.ForeColor = color == Bad ? Bad : color == Muted ? Muted : color == Warn ? Warn : TextColor; dot.BackColor = color; }
-    private void SetAction(string text, bool bad = false) { if (IsDisposed) return; _lastAction.Text = $"{DateTime.Now:HH:mm:ss}  {text}"; _lastAction.ForeColor = bad ? Bad : Muted; }
-    private void OpenWorkbench() { OpenWorkbenchUrl(_baseUrl + "/control"); }
-    private void OpenLatestBatch() { OpenWorkbenchUrl(_baseUrl + "/control?focus=latest"); }
-    private void OpenWorkbenchUrl(string url)
+    private void SetAction(string text, bool bad = false)
     {
+        if (IsDisposed || _closing) return;
+        _lastAction.Text = text;
+        _lastAction.ForeColor = bad ? Bad : Muted;
+        _noticePanel.Visible = bad;
+        if (_startupPanel.Visible)
+        {
+            _startupMessage.Text = text;
+            _startupMessage.ForeColor = bad ? Bad : TextColor;
+        }
+    }
+
+    private async Task InitializeWorkbenchAsync()
+    {
+        if (_workbenchInitializing || _workbenchNavigationPending || _workbenchReady || _closing) return;
+        _workbenchInitializing = true;
         try
         {
-            if (_workbenchWindow is { IsDisposed: false })
-            {
-                _workbenchWindow.WindowState = FormWindowState.Normal;
-                _workbenchWindow.Activate();
-                if (url.EndsWith("?focus=latest", StringComparison.Ordinal))
-                {
-                    var existingView = _workbenchWindow.Controls.OfType<WebView2>().FirstOrDefault();
-                    if (existingView is not null) _ = FocusLatestBatchAsync(existingView, url);
-                }
-                return;
-            }
-            var view = new WebView2 { Dock = DockStyle.Fill, CreationProperties = new CoreWebView2CreationProperties { UserDataFolder = Path.Combine(_root, "runtime", "webview-profile") } };
-            var window = new Form { Text = "Multica 任务工作台", StartPosition = FormStartPosition.CenterScreen, Width = 1440, Height = 940, MinimumSize = new Size(1050, 700), BackColor = Bg };
-            window.Controls.Add(view);
-            window.FormClosed += (_, _) => { _workbenchWindow = null; view.Dispose(); };
-            _workbenchWindow = window;
-            window.Show(this);
-            _ = InitializeWorkbenchAsync(view, url);
-            SetAction("已在 Multica 窗口内打开任务工作台。");
+            await _workbenchView.EnsureCoreWebView2Async();
+            if (_closing || IsDisposed) return;
+            _workbenchNavigationPending = true;
+            _workbenchView.CoreWebView2.Navigate(_baseUrl + "/control");
         }
-        catch (Exception ex) { SetAction("内置工作台启动失败，请确认 Microsoft Edge WebView2 Runtime 已安装：" + ex.Message, true); }
-    }
-    private async Task FocusLatestBatchAsync(WebView2 view, string url)
-    {
-        try
+        catch (Exception ex)
         {
-            if (view.CoreWebView2 is null) await InitializeWorkbenchAsync(view, url);
-            else await view.CoreWebView2.ExecuteScriptAsync("window.MulticaWorkbench?.openLatestBatch();");
+            _workbenchNavigationPending = false;
+            _workbenchLoadFailed = true;
+            SetAction("工作区启动失败，请检查 Microsoft Edge WebView2 Runtime，然后重试：" + ex.Message, true);
+            _startupRetry.Enabled = true;
         }
-        catch (Exception ex) { SetAction("最近批次打开失败：" + ex.Message, true); }
+        finally { _workbenchInitializing = false; }
     }
-    private async Task InitializeWorkbenchAsync(WebView2 view, string url)
-    {
-        try { await view.EnsureCoreWebView2Async(); view.CoreWebView2.Navigate(url); }
-        catch (Exception ex) { SetAction("内置工作台加载失败，请确认本地桥接仍在运行：" + ex.Message, true); }
-    }
-    private void OpenOutput() => OpenFolder(Path.Combine(_root, "mj-automation", "output"), "成品目录");
     private void OpenRoot() => OpenFolder(_root, "安装目录");
     private void OpenFolder(string path, string label) { try { Directory.CreateDirectory(path); Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true }); SetAction("已打开" + label + "。"); } catch (Exception ex) { SetAction("打开" + label + "失败：" + ex.Message, true); } }
-    private async Task StartBrowser() { try { var response = await _http.PostAsync(_baseUrl + "/control/browser/start", null); var msg = await response.Content.ReadAsStringAsync(); SetAction(response.IsSuccessStatusCode ? "可见登录浏览器已打开，登录状态会自动刷新。" : "打开浏览器失败：" + msg, !response.IsSuccessStatusCode); await RefreshStatusAsync(); } catch (Exception ex) { SetAction("打开浏览器失败：" + ex.Message, true); } }
-    private void StopButtonClick(object? sender, EventArgs e)
-    {
-        if (!_stopButton.Enabled) return;
-        if (_stopButton.Text == "\u542f\u52a8\u670d\u52a1") { _recoveryAttempts = 0; _ = StartServiceAsync(); }
-        else _ = StopServiceAsync();
-    }
-
     private async Task<bool?> ReadActiveWorkAsync()
     {
         try
@@ -456,7 +427,8 @@ internal sealed class MainForm : Form
         StopOwnedServer();
         _timer.Stop();
         SetAction("\u5df2\u505c\u6b62\u672c\u7a0b\u5e8f\u542f\u52a8\u7684\u672c\u5730\u6865\u63a5\uff1b\u4efb\u52a1\u72b6\u6001\u4e0e\u6210\u54c1\u5747\u4fdd\u7559\u3002");
-        SetStatus(_serviceValue, _serviceDot, "\u5df2\u505c\u6b62", Warn);
+        _serviceStatus.Text = "本机服务已停止";
+        _stopMenu.Enabled = false;
     }
     private async Task RecoverExitedServiceAsync()
     {

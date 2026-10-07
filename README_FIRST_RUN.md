@@ -2,9 +2,9 @@
 
 ## 先启动新版本
 
-权威发行版本为 `2026.10.08.1`，安装包为 `Multica-Control-Console-2026.10.08.1.zip`。以公开软件仓库对应 tag 的 Release assets、SHA256 和发行记录为准。请解压到**新的独立目录**，双击 `Multica.exe`；也可使用 `Start-Multica.cmd`。本轮没有交付新的 Setup EXE，不要将历史安装器当作这一版安装器。
+权威发行版本为 `2026.10.08.2`，安装包为 `Multica-Control-Console-2026.10.08.2.zip`。以公开软件仓库对应 tag 的 Release assets、SHA256 和发行记录为准。请解压到**新的独立目录**，双击 `Multica.exe`；也可使用 `Start-Multica.cmd`。本轮没有交付新的 Setup EXE，不要将历史安装器当作这一版安装器。
 
-包内含独立 Python、桥接依赖、Node.js 和 Playwright；本机需 Microsoft Edge 和 Microsoft Edge WebView2 Runtime。桌面入口启动本地桥并打开中文工作台，默认地址 `http://127.0.0.1:8765/control`。另一套安装占用端口时软件会提示冲突，不会接管不同目录的桥。
+包内含独立 Python、桥接依赖、Node.js 和 Playwright；本机需 Microsoft Edge 和 Microsoft Edge WebView2 Runtime。桌面启动后直接进入新版创作工作区，无需再打开旧总览或第二个窗口。加载失败时可点「重试连接」，本机服务工具在底部「本机诊断」菜单。桌面入口启动本地桥并打开中文工作台，默认地址 `http://127.0.0.1:8765/control`。另一套安装占用端口时软件会提示冲突，不会接管不同目录的桥。
 
 ## 顺手完成一轮创作
 

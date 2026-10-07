@@ -2,7 +2,11 @@
 
 Windows 本地创作工作台：准备创意 → 组织批次 → 检查并保存 → 运行监控 → 图片筛选与比较 → 归档和复用。
 
-权威版本 **2026.10.08.1**。源码以本仓库 tag `v2026.10.08.1` 为准；安装包与 SHA256 在该 tag 的 GitHub Release assets。安装包为可安装的 Windows x64 ZIP，解压后用 `Install-Multica.cmd` 安装，或用 `Multica.exe` 便携运行。需要 Edge 和 WebView2 Runtime。
+权威版本 **2026.10.08.2**。源码以本仓库 tag `v2026.10.08.2` 为准；安装包与 SHA256 在该 tag 的 GitHub Release assets。安装包为可安装的 Windows x64 ZIP，解压后用 `Install-Multica.cmd` 安装，或用 `Multica.exe` 便携运行。需要 Edge 和 WebView2 Runtime。
+
+## 桌面启动修复
+
+启动直接进入新版创作工作区；移除旧总览首页和二级窗口。连接失败显示重试，本机诊断按需打开；健康检查不重载草稿。保留原有图片、任务、回执、配置和浏览器档案。新增 19 项桌面入口和生命周期契约检查，不初始化或操作浏览器，视觉验收仍待人工。
 
 ## 图片工作区
 
@@ -20,7 +24,7 @@ Windows 本地创作工作台：准备创意 → 组织批次 → 检查并保�
 
 ## 源码运行与验证
 
-Windows 需 Node.js、Python 3.10+ 和 .NET 10 SDK。执行 `Setup-Multica.cmd` 准备本地依赖，之后运行 `npm test`、`npm run verify`。构建命令：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_multica_portable.ps1 -Version 2026.10.08.1`。构建依赖本机准备的 Python、Node 和 Playwright；不会将账号档案放入分发包。
+Windows 需 Node.js、Python 3.10+ 和 .NET 10 SDK。执行 `Setup-Multica.cmd` 准备本地依赖，之后运行 `npm test`、`npm run verify`。构建命令：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_multica_portable.ps1 -Version 2026.10.08.2`。构建依赖本机准备的 Python、Node 和 Playwright；不会将账号档案放入分发包。
 
 本仓库只含软件源码和发行资料，独立于私人项目控制台。`SOURCE_FILES.json` 记录本次从工作区取出的每份软件源码哈希，可核对安装包。公开代码尚未选择额外许可证；第三方依赖遵循各自许可证。
 

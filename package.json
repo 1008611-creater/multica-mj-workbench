@@ -1,7 +1,7 @@
 {
   "name": "multica-mj-workbench",
   "private": true,
-  "version": "2026.10.08.1",
+  "version": "2026.10.08.2",
   "scripts": {
     "test": "node --test mj-automation/scripts/production_machine.test.mjs mj-automation/scripts/gallery-logic.test.cjs && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1",
     "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-public.ps1"
