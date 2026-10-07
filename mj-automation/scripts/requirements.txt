@@ -1,0 +1,12 @@
+# MJ 生图桥接服务 —— Python 依赖
+#
+# 安装：
+#   pip install -r requirements.txt
+#
+# 说明：FastAPI 外壳只做 HTTP 转发与结果透传，不直接操作浏览器；
+# 真正的浏览器自动化跑在 Node 侧（mxai_adapter.js），依赖 playwright，
+# 复用原项目已装好的 node_modules，不需要在这里装。
+
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6

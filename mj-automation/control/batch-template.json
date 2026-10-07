@@ -1,0 +1,16 @@
+{
+  "batch_id": "demo-batch-001",
+  "name": "木卫二视觉锚点模拟批次",
+  "concurrency": 3,
+  "output_dir": "E:/Multica-Control-Console/mj-automation/output",
+  "items": [
+    {
+      "id": "R5_MJ_ANCHOR_01",
+      "name": "木卫二冰下巨影",
+      "prompt": "A vast dark ocean beneath Europa's translucent ice shell, viewed from below, a tiny unmarked scientific probe almost lost in the scale",
+      "aspect": "16:9",
+      "version": "v8.2",
+      "params": {}
+    }
+  ]
+}

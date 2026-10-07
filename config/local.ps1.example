@@ -1,0 +1,9 @@
+﻿# Optional local settings. Copy this file to config\local.ps1.
+# Do not put passwords, cookies, tokens, API keys, or browser profiles here.
+$MulticaPort = 8765
+$MulticaTimeoutMs = 1200000
+# $MulticaProxy = "127.0.0.1:7897"
+# $MulticaMxaiUrl = "https://www.mxai.cn/home/?mp=mjdrawai&from=invite&invite_id=100595351#/mj"
+# $MulticaPython = "C:\\Python311\\python.exe"
+# $MulticaNode = "C:\\Program Files\\nodejs\\node.exe"
+# $MulticaNpm = "C:\\Program Files\\nodejs\\npm.cmd"
